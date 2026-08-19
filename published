@@ -1,8 +1,8 @@
 #!/bin/sh
 
-keys="Saglam2018 SaglamT2013 Saglam2011 JowhariST2011 ErgunJS2010"
+keys="WangMSW+2020 Saglam2018 SaglamT2013 Saglam2011 JowhariST2011 ErgunJS2010"
 
 for key in $keys; do
-  bibtool -r bibtool.rsc -X $key ./main.bib 2>/dev/null 
+  key_pattern=$(printf '%s\n' "$key" | sed 's/+/[+]/g')
+  bibtool -r bibtool.rsc -X "^${key_pattern}$" ./main.bib 2>/dev/null
 done
-

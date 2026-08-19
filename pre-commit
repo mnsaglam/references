@@ -1,47 +1,46 @@
 #!/bin/sh
 
-difftool=$(git config --get diff.tool)
-
-verify_bib_file() {
-  ofile=__to_commit.bib
-  echo $1, $ofile
-  pwd
-  bibtool -r bibtool.rsc -i "./$1" -o $ofile
-  if ! cmp --silent $1 $ofile; then
-    $difftool $1 $ofile >/dev/null 2>/dev/null
-    cp -f $ofile $1
-    bibtool -r bibtool.rsc -i "./$1" -o $ofile
-    if ! cmp --silent $1 $ofile; then
-      rm -f $ofile
-      tput bold
-      echo "\n"$1 "is not in canonical format."
-      tput sgr0
-      echo "Fix the .bib file using bibtool."
-      echo "Failing the commit.\n\n"
-      return 1
-    else
-      git add $1
-    fi
-  fi
-  rm -f $ofile
-  return 0
-}
-
-if git rev-parse --verify HEAD >/dev/null 2>&1
-then
-  against=HEAD
-else
-  # Initial commit: diff against an empty tree object
-  against=4b825dc642cb6eb9a060e54bf8d69288fbee4904
-fi
-
-# Redirect output to stderr.
+# Redirect output to stderr so Git displays hook diagnostics.
 exec 1>&2
 
-git diff --cached --name-only --diff-filter=AM . | grep "\.bib$" | \
-  while read in; do
-    if ! verify_bib_file $in; then
-      return 1;
-    fi;
-  done
+verify_bib_file() {
+  input=$1
+  output=$(mktemp "${TMPDIR:-/tmp}/references-bibtool.XXXXXX") || return 1
+  diagnostics=$(mktemp "${TMPDIR:-/tmp}/references-bibtool.XXXXXX") || {
+    rm -f "$output"
+    return 1
+  }
 
+  bibtool -q -r bibtool.rsc -i "./$input" -o "$output" \
+    2>"$diagnostics"
+  bibtool_status=$?
+
+  # BibTool reports unresolved crossrefs as errors even though it successfully
+  # formats the self-contained entries in this legacy database.
+  if [ "$bibtool_status" -ne 0 ] ||
+    grep -Ev '^$|^\*\*\* BibTool ERROR: Crossref not found: $' \
+      "$diagnostics" | grep -q .; then
+    cat "$diagnostics"
+    rm -f "$output" "$diagnostics"
+    return 1
+  fi
+  rm -f "$diagnostics"
+
+  if cmp -s "$input" "$output"; then
+    rm -f "$output"
+    return 0
+  fi
+
+  cp -f "$output" "$input"
+  rm -f "$output"
+  printf '\n%s was reformatted by BibTool.\n' "$input"
+  printf 'Review and stage the result, then commit again.\n\n'
+  return 1
+}
+
+git diff --cached --name-only --diff-filter=AM -- '*.bib' |
+  while IFS= read -r input; do
+    if ! verify_bib_file "$input"; then
+      exit 1
+    fi
+  done
